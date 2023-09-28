@@ -1,5 +1,5 @@
 import numpy as np
-import gdal
+from osgeo import gdal
 
 def compute_flow_direction(dem):
     """Compute flow direction using the D8 algorithm."""
@@ -7,14 +7,19 @@ def compute_flow_direction(dem):
     flow_dir = np.zeros((nrows, ncols), dtype=np.int32)
 
     # Compute the slope and aspect of each cell
-    dx = 30.0  # Cell size in meters
-    dy = 30.0
+    dx = 97.0  # Cell size in meters
+    dy = 97.0
     slope_x = (dem[:, :-1] - dem[:, 1:]) / dx
     slope_y = (dem[:-1, :] - dem[1:, :]) / dy
-    slope_x[slope_x > 1.0] = 1.0
-    slope_x[slope_x < -1.0] = -1.0
-    slope_y[slope_y > 1.0] = 1.0
-    slope_y[slope_y < -1.0] = -1.0
+    slope_x = np.pad(slope_x, ((0, 0), (0, 1)), 'constant', constant_values=np.nan)  # Add a column of NaN values
+    slope_y = np.pad(slope_y, ((0, 1), (0, 0)), 'constant', constant_values=np.nan)  # Add a row of NaN values
+
+    # Create masks to limit the slopes to [-1, 1]
+    slope_x = np.where(slope_x > 1.0, 1.0, slope_x)
+    slope_x = np.where(slope_x < -1.0, -1.0, slope_x)
+    slope_y = np.where(slope_y > 1.0, 1.0, slope_y)
+    slope_y = np.where(slope_y < -1.0, -1.0, slope_y)
+
     slope = np.arctan(np.sqrt(slope_x ** 2 + slope_y ** 2))
     aspect = np.arctan2(slope_y, -slope_x)
 
@@ -22,12 +27,16 @@ def compute_flow_direction(dem):
     for i in range(1, nrows - 1):
         for j in range(1, ncols - 1):
             neighbors = [(i-1, j-1), (i-1, j), (i-1, j+1),
-                         (i, j-1), (i, j+1),
+                         (i, j-1),              (i, j+1),
                          (i+1, j-1), (i+1, j), (i+1, j+1)]
-            elev_diff = dem[i, j] - dem[neighbors][:, :, np.newaxis]
-            slopes = np.sqrt(np.sum(elev_diff ** 2, axis=1)) / dx
-            slopes[slopes > 1.0] = 1.0
-            angles = np.abs(aspect[i, j] - np.arctan2(dem[neighbors] - dem[i, j], dx))
+            elev_diff = [dem[ni, nj] - dem[i, j] for ni, nj in neighbors]
+            elev_diff = np.array(elev_diff)
+            slopes = np.sqrt(np.sum(elev_diff ** 2)) / dx
+
+            # Create masks to limit the slopes to [0, 1]
+            slopes = np.where(slopes > 1.0, 1.0, slopes)
+
+            angles = np.abs(aspect[i, j] - np.arctan2(elev_diff, dx))
             angles[angles > np.pi] -= 2.0 * np.pi
             weights = slopes * np.cos(angles)
             max_idx = np.argmax(weights)
@@ -35,6 +44,10 @@ def compute_flow_direction(dem):
                 flow_dir[i, j] = max_idx + 1
 
     return flow_dir
+
+# Rest of the code remains the same
+
+
 
 def compute_flow_accumulation(flow_dir):
     """Compute flow accumulation using a recursive algorithm."""
